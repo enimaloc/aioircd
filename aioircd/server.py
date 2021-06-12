@@ -1,31 +1,55 @@
+import dataclasses
+import trio
+import signal
 import aioircd
-from contextvars import ContextVar
-from dataclasses import dataclass, field
+from aioircd.user import User
 
 class Server:
     def __init__(self, host, port, pwd):
         self.host = host
         self.port = port
-        self.local = ServerLocal(pwd)
+        self.pwd = pwd
+
+    async def handle(self, stream):
+        user = User(stream)
+        logger.info("Connection with %s established", user)
+        async with trio.open_nursery() as nursery:
+            nursery.start_soon(user.ping_forever)
+            try:
+                await user.serve()
+            except Exception:
+                logger.exception("Error while serving %s", user)
+            nursery.cancel_scope.cancel()
+
+        await user.terminate()
+        logging.info("Connection with %s closed", user)
+
+    async def _onterm(self):
+        with trio.open_signal_receiver(signal.SIGTERM, signal.SIGINT) as signal_aiter:
+            async for _ in signal_aiter:
+                if self._nursery.cancel_scope.cancel_called:
+                    raise KeyboardInterrupt()
+                self._nursery.cancel_scope.cancel()
+
+    async def serve(self):
+        aioircd.servlocal.set(ServLocal(self.host, self.pwd, {}, {}))
+        async with trio.open_nursery() as self._nursery:
+            self._nursery.start_soon(self._onterm)
+            await trio.serve_tcp(self.handle, self.port, host=self.host)
 
 
-
-    async def start(self):
-        aioircd.local_var.set(self.local)
-        ...
-
-    def handle(self, reader, writer):
-        ...
-
-    async def _handle(self, reader, writer):
-        ...
-
-    async def shutdown(self):
-        ...
-
-@dataclass(eq=False)
-class ServerLocal:
-    """ Storage shared among all server's entities """
+@dataclasses.dataclass(eq=False)
+class ServLocal:
+    host: str
     pwd: str
-    users: field(default_factory=dict)
-    channels: field(default_factory=dict)
+    users: dict
+    channels: dict
+
+    def __repr__(self):
+        return (
+            f"{self.__name__}("
+            f"host: {self.host!r}, "
+            f"pass: {'yes' if self.pwd else 'no'}, "
+            f"users: {len(self.users)}, "
+            f"channels: {len(self.channels)})"
+        )

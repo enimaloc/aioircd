@@ -1,6 +1,8 @@
-import os
 import logging
+import os
+import trio
 import aioircd
+import aioircd.server
 
 
 # Color the [LEVEL] part of messages, need new terminal on Windows
@@ -20,8 +22,6 @@ class ColoredFormatter(logging.Formatter):
         record.levelname = f"\033[1;{fg}m\033[1;{bg}m{record.levelname}\033[0m"
         return super().format(record)
 
-def setup():
-
 def main():
     stderr = logging.StreamHandler()
     stderr.formatter = (
@@ -29,8 +29,13 @@ def main():
         if hasattr(stderr, 'fileno') and os.isatty(stderr.fileno()) else
         logging.Formatter("[%(levelname)s] <%(funcName)s> %(message)s")
     )
+    aioircd.logger.addHandler(stderr)
+
+    server = aioircd.server.Server()
 
     try:
-        ...
+        trio.run(server.serve)
     except Exception:
         logging.critical("Dead", exc_info=True)
+    finally:
+        logging.shutdown()

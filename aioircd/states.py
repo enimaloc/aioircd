@@ -1,4 +1,11 @@
+import abc
+import aioircd
 from aioircd.exceptions import *
+
+__all__ = [
+    'UserState', 'ConnectedState', 'PasswordState', 'RegisteredState',
+    'QuitState'
+]
 
 def command(func):
     """ Denote the function can be triggered by an IRC message """
@@ -6,13 +13,22 @@ def command(func):
     return func
 
 
-class UserState():
+class UserState(metaclass=abc.ABCMeta):
     def __init__(self, user):
         logger.debug("state of user %s changed: %s -> %s", user, user.state, self)
         self.user = user
 
     def __str__(self):
-        return type(self).__name__[5:]
+        return type(self).__name__[:5]
+
+    async def dispatch(self, cmd, args):
+        meth = getattr(self, cmd, None)
+        if not meth or not getattr(meth, 'command', False):
+            logger.debug("unknown command %s sent by %s", cmd, self.user)
+            return
+
+        await meth(cmd, args)
+
 
     @command
     async def PING(self, args):
@@ -51,10 +67,10 @@ class UserState():
             if not channel.users:
                 self.user.local.channels.pop(channel.name)
         self.user.channels.clear()
-        self.user.state = StateQuit(self.user)
+        self.user.state = QuitState(self.user)
 
 
-class StatePassword(UserState):
+class PasswordState(UserState):
     @command
     async def PASS(self, args):
         if not args:
@@ -63,10 +79,10 @@ class StatePassword(UserState):
             logger.log(SecurityLevel, "Invalid password for %s", self.user)
             return
 
-        self.user.state = StateConnected(self.user)
+        self.user.state = ConnectedState(self.user)
 
 
-class StateConnected(UserState):
+class ConnectedState(UserState):
     """
     The user is just connected, he must register via the NICK command
     first before going on.
@@ -107,20 +123,18 @@ class StateConnected(UserState):
             await self.register()
 
     async def register(self):
-        self.user.state = StateRegistered(self.user)
+        self.user.state = RegisteredState(self.user)
         nick = self.user.nick
         await self.user.send(textwrap.dedent(f"""\
-            :{HOST} 001 {nick} :Welcome to the Internet Relay Network {self.user.full_id}
+            :{HOST} 001 {nick} :Welcome to the Internet Relay Network {nick}@!
             :{HOST} 002 {nick} :Your host is {HOST}
             :{HOST} 003 {nick} :The server was created at some point
-            :{HOST} 004 {nick} :aioircd {__version__}  """))
-            #                                          ^ available channel modes
-            #                                         ^ available user modes
+            :{HOST} 004 {nick} :aioircd {aioircd.__version__}  """))
+            #                                                 ^ available channel modes
+            #                                                ^ available user modes
 
 
-
-
-class StateRegistered(UserState):
+class RegisteredState(UserState):
     """
     The user sent the NICK command, he is fully registered to the server
     and may use any command.
@@ -196,7 +210,7 @@ class StateRegistered(UserState):
             await receiver.send(f":{self.user.nick} PRIVMSG {dest} {msg}")
 
 
-class StateQuit(UserState):
+class QuitState(UserState):
     """ The user sent the QUIT command, no more message should be processed """
 
 

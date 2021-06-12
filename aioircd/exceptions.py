@@ -1,8 +1,12 @@
+class Disconnect(Exception):
+    def __init__(self, *, exploit=False):
+        self.exploit = exploit
+
 class IRCException(Exception):
     """
     Abstract IRC exception
 
-    They are excepted by serve() and forwarded to the user.
+    They are excepted by dispatch() and forwarded to the user.
     """
     def __init__(self, *args):
         super().__init__(type(self).format(*args))

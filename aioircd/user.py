@@ -1,22 +1,24 @@
 import aioircd
 import ipaddress
+import uuid
+import trio
+
+from aioircd.states import *
+from aioircd.exceptions import IRCException, Disconnect, Kick
 
 class User:
-    count = 0
-
-    def __init__(self, reader, writer):
-        self.reader = reader
-        self.writer = writer
-        self.local = aioircd.local_var.get()
+    def __init__(self, stream):
+        servlocal = aioircd.servlocal.get()
+        self.stream = stream
         self._nick = None
+        self.uid = uuid.uuid4()
         self.state = None
-        self.state = StatePassword(self) if local.pwd else StateConnected(self)
+        self.state = (PasswordState if servlocal.pwd else ConnectedState)(self)
         self.channels = set()
-        self.uid = type(self).count
-        type(self).count += 1
+        self._ping_timer = trio.CancelScope()  # dummy
 
     def __hash__(self):
-        return self.uid
+        return self.uid.int
 
     @property
     def nick(self):
@@ -24,93 +26,68 @@ class User:
 
     @nick.setter
     def nick(self, nick):
-        self.local.users[nick] = self.local.users.pop(self._nick, self)
+        local = aioircd.local_var.get()
+        local.users[nick] = local.users.pop(self._nick, self)
         self._nick = nick
 
-    @property
-    def addr(self):
-        ip = ipaddress self.writer.get_extra_info('peername')[0]
-        return
-
     def __str__(self):
-        return self.nick or self.addr
+        if self.nick:
+            return self.nick
 
-    async def read_lines(self):
-        """
-        Read messages until (i) the user send a QUIT command or (ii) the
-        user close his side of the connection (FIN sent) or (iii) the
-        connection is reset.
-        """
-        buffer = b""
-        graceful_close = True
-        while type(self.state) != StateQuit:
-            chunk = b""
-            self._read_task = asyncio.create_task(self.reader.read(1024))
-            self.reschedule_ping()
-            try:
-                chunk = await asyncio.wait_for(self._read_task, TIMEOUT)
-            except asyncio.CancelledError:
-                buffer = b"QUIT :Kicked\r\n"
-                graceful_close = False
-            except asyncio.TimeoutError:
-                buffer = b"QUIT :Ping timeout\r\n"
-                graceful_close = False
-            except ConnectionResetError:
-                buffer = b"QUIT :Connection reset by peer\r\n"
-                graceful_close = False
-            else:
-                if not chunk:
-                    buffer = b"QUIT :EOF Received\r\n"
+        ip, port, *_ = self.stream.socket.get_extra_info('peername')
+        if isinstance(ipaddress.ip_address(ip), ipaddress.IPv6Address):
+            return f'[{ip}]:{port}'
+        return f'{ip}:{port}'
 
-
-            # imagine two messages of 768 bytes are sent together, read(1024)
-            # only read the first one and the 256 first bytes of the second,
-            # the first ends up in lines, the second in buffer. Next call to
-            # read(1024) will complete the second message.
-            buffer += chunk
-            *lines, buffer = buffer.split(b'\r\n')
-            if any(len(line) > 1022 for line in lines + [buffer]):
-                # one IRC message cannot exceed 1024 bytes (\r\n included)
-                raise MemoryError("Message exceed 1024 bytes")
-
-            for line in lines:
-                try:
-                    line = line.decode('utf-8')
-                except UnicodeDecodeError:
-                    line = line.decode('latin-1')
-                yield line
-
-        if graceful_close:
-            self.writer.write_eof()
-            await self.writer.drain()
-
+    async def ping_forever(self):
+        while True:
+            with trio.move_on_after(5) as self._ping_timer:
+                await trio.sleep_forever()
+            await self.stream.send_all(b'PING\r\n')
 
     async def serve(self):
-        """ Listen for new messages and process them """
-        async for line in self.read_lines():
-            logger_io.log(IOLevel, "<%s %s", self, line)
-            cmd, *args = line.split()
-            func = getattr(self.state, cmd, None)
-            if getattr(func, 'command', False):
+        buffer = b""
+        while type(self.state) is not QuitState:
+            self._ping_timer.deadline = \
+                trio.current_time() + (TIMEOUT - PING_TIMEOUT)
+            with trio.move_on_after(TIMEOUT) as cs:
                 try:
-                    await func(args)
-                except IRCException as exc:
-                    logger.warning("%s sent an invalid command.", self)
-                    await self.send(exc.args[0])
+                    chunk = await self.stream.receive_some(1024)
+                except Exception as exc:
+                    raise Disconnect("Network failure") from exc
+            if cs.cancelled_caught:
+                raise Disconnect("Timeout")
+            elif not chunk:
+                buffer = b"QUIT :End of transmission"
             else:
-                logger.warning("%s sent an unknown command: %s", self, cmd)
+                buffer += chunk
 
-    async def send(self, msg: str, log=True):
-        """ Send a message to the user """
-        if self.writer.is_closing():
-            return
-        for line in msg.splitlines():
-            if log:
-                logger_io.log(IOLevel, ">%s %s", self, line)
-            self.writer.write(f"{line}\r\n".encode())
-        await self.writer.drain()
+            *lines, buffer = buffer.split(b'\r\n')
+            if any(len(line) > 1022 for line in lines + [buffer]):
+                raise Disconnect("Buffer overflow", exploit=True) from (
+                    MemoryError("Message exceed 1024 bytes"))
 
-    async def terminate(self):
-        asyncio.get_running_loop().call_later(PING_TIMEOUT, self._read_task.cancel)
-        self.writer.write_eof()
-        await self.writer.drain()
+            for line in [l for l in lines if l]:
+                try:
+                    cmd, *args = line.decode().split(' ')
+                except UnicodeDecodeError as exc:
+                    raise Disconnect("Gibberish", exploit=True) from exc
+
+                try:
+                    self.state.dispatch(cmd, args)
+                except IRCException:
+                    logger.warning("Command %s sent by %s failed, code: %s",
+                        cmd, self, exc.code)
+                    await self.user.send(exc.args[0])
+
+    async def terminate(self, kick_msg="Kicked by host"):
+        logger.info("terminate connection of %s", self)
+        if hasattr(self, '_nursery'):
+            self._nursery.cancel_scope.cancel()
+
+        if type(self.state) != StateQuit:
+            await self.state.dispatch(f"QUIT :{kick_msg}")
+
+        with trio.move_on_after(PING_TIMEOUT) as cs:
+            await self.stream.send_eof()
+        await self.stream.aclose()
