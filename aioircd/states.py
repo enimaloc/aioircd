@@ -1,6 +1,10 @@
 import abc
 import aioircd
+import logging
 from aioircd.exceptions import *
+
+logger = logging.getLogger(__name__)
+
 
 __all__ = [
     'UserState', 'ConnectedState', 'PasswordState', 'RegisteredState',
@@ -19,7 +23,7 @@ class UserState(metaclass=abc.ABCMeta):
         self.user = user
 
     def __str__(self):
-        return type(self).__name__[:5]
+        return type(self).__name__[:-5]
 
     async def dispatch(self, cmd, args):
         meth = getattr(self, cmd, None)
@@ -27,8 +31,7 @@ class UserState(metaclass=abc.ABCMeta):
             logger.debug("unknown command %s sent by %s", cmd, self.user)
             return
 
-        await meth(cmd, args)
-
+        await meth(args)
 
     @command
     async def PING(self, args):

@@ -2,15 +2,20 @@ import aioircd
 import ipaddress
 import uuid
 import trio
+import logging
 
+from aioircd.config import TIMEOUT, PING_TIMEOUT
 from aioircd.states import *
-from aioircd.exceptions import IRCException, Disconnect, Kick
+from aioircd.exceptions import IRCException, Disconnect
+
+logger = logging.getLogger(__name__)
 
 class User:
     def __init__(self, stream):
         servlocal = aioircd.servlocal.get()
         self.stream = stream
         self._nick = None
+        self._addr = stream.socket.getpeername()
         self.uid = uuid.uuid4()
         self.state = None
         self.state = (PasswordState if servlocal.pwd else ConnectedState)(self)
@@ -34,14 +39,14 @@ class User:
         if self.nick:
             return self.nick
 
-        ip, port, *_ = self.stream.socket.get_extra_info('peername')
+        ip, port = self._addr
         if isinstance(ipaddress.ip_address(ip), ipaddress.IPv6Address):
             return f'[{ip}]:{port}'
         return f'{ip}:{port}'
 
     async def ping_forever(self):
         while True:
-            with trio.move_on_after(5) as self._ping_timer:
+            with trio.move_on_after(TIMEOUT - PING_TIMEOUT) as self._ping_timer:
                 await trio.sleep_forever()
             await self.stream.send_all(b'PING\r\n')
 
@@ -58,36 +63,30 @@ class User:
             if cs.cancelled_caught:
                 raise Disconnect("Timeout")
             elif not chunk:
-                buffer = b"QUIT :End of transmission"
-            else:
-                buffer += chunk
+                raise Disconnect("End of transmission")
 
-            *lines, buffer = buffer.split(b'\r\n')
+            *lines, buffer = (buffer + chunk).split(b'\r\n')
             if any(len(line) > 1022 for line in lines + [buffer]):
-                raise Disconnect("Buffer overflow", exploit=True) from (
-                    MemoryError("Message exceed 1024 bytes"))
+                raise Disconnect("Payload too long")
 
             for line in [l for l in lines if l]:
                 try:
                     cmd, *args = line.decode().split(' ')
                 except UnicodeDecodeError as exc:
-                    raise Disconnect("Gibberish", exploit=True) from exc
+                    raise Disconnect("Gibberish") from exc
 
                 try:
-                    self.state.dispatch(cmd, args)
+                    await self.state.dispatch(cmd, args)
                 except IRCException:
-                    logger.warning("Command %s sent by %s failed, code: %s",
-                        cmd, self, exc.code)
+                    logger.warning("Command %s sent by %s failed, code: %s", cmd, self, exc.code)
                     await self.user.send(exc.args[0])
 
     async def terminate(self, kick_msg="Kicked by host"):
-        logger.info("terminate connection of %s", self)
+        logger.info("Terminate connection of %s", self)
         if hasattr(self, '_nursery'):
             self._nursery.cancel_scope.cancel()
-
-        if type(self.state) != StateQuit:
-            await self.state.dispatch(f"QUIT :{kick_msg}")
-
+        if type(self.state) != QuitState:
+            await self.state.dispatch("QUIT", f":{kick_msg}")
         with trio.move_on_after(PING_TIMEOUT) as cs:
             await self.stream.send_eof()
         await self.stream.aclose()

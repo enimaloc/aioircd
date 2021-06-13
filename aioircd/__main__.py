@@ -3,6 +3,9 @@ import os
 import trio
 import aioircd
 import aioircd.server
+from aioircd.config import *
+
+logger = logging.getLogger(__name__)
 
 
 # Color the [LEVEL] part of messages, need new terminal on Windows
@@ -14,7 +17,7 @@ class ColoredFormatter(logging.Formatter):
         logging.INFO: (37, 49),
         logging.WARNING: (33, 49),
         logging.ERROR: (31, 49),
-        logging.SECURITY: (31, 49),
+        aioircd.SECURITY: (31, 49),
         logging.CRITICAL: (37, 41),
     }
     def format(self, record):
@@ -25,17 +28,18 @@ class ColoredFormatter(logging.Formatter):
 def main():
     stderr = logging.StreamHandler()
     stderr.formatter = (
-        ColoredFormatter("%(asctime)s [%(levelname)s] <%(funcName)s> %(message)s")
+        ColoredFormatter("%(asctime)s [%(levelname)s] %(message)s")
         if hasattr(stderr, 'fileno') and os.isatty(stderr.fileno()) else
-        logging.Formatter("[%(levelname)s] <%(funcName)s> %(message)s")
+        logging.Formatter("[%(levelname)s] %(message)s")
     )
     aioircd.logger.addHandler(stderr)
 
-    server = aioircd.server.Server()
-
+    server = aioircd.server.Server(ADDR, PORT, PASS)
     try:
         trio.run(server.serve)
     except Exception:
-        logging.critical("Dead", exc_info=True)
+        logger.critical("Dead", exc_info=True)
     finally:
         logging.shutdown()
+
+main()

@@ -1,6 +1,5 @@
 class Disconnect(Exception):
-    def __init__(self, *, exploit=False):
-        self.exploit = exploit
+    pass
 
 class IRCException(Exception):
     """
