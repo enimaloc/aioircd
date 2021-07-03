@@ -1,12 +1,15 @@
 import dataclasses
-import trio
 import logging
 import signal
+import trio
+
 import aioircd
-from aioircd.user import User
 from aioircd.exceptions import Disconnect
+from aioircd.user import User
+
 
 logger = logging.getLogger(__name__)
+
 
 class Server:
     def __init__(self, host, port, pwd):
@@ -15,9 +18,10 @@ class Server:
         self.pwd = pwd
 
     async def handle(self, stream):
-        user = User(stream)
-        logger.info("Connection with %s established.", user)
+        servlocal = aioircd.servlocal.get()
         async with trio.open_nursery() as nursery:
+            user = User(stream, nursery)
+            logger.info("Connection with %s established.", user)
             nursery.start_soon(user.ping_forever)
             try:
                 await user.serve()
@@ -56,9 +60,9 @@ class ServLocal:
 
     def __repr__(self):
         return (
-            f"{self.__name__}("
-            f"host: {self.host!r}, "
-            f"pass: {'yes' if self.pwd else 'no'}, "
-            f"users: {len(self.users)}, "
-            f"channels: {len(self.channels)})"
+            f'{self.__name__}('
+            f'host: {self.host!r}, '
+            f'pass: {"yes" if self.pwd else "no"}, '
+            f'users: {len(self.users)}, '
+            f'channels: {len(self.channels)})'
         )

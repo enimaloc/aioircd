@@ -1,18 +1,37 @@
-import aioircd
-import uuid
+import ipaddress
 import logging
-from typing import Union
+import trio
+import uuid
+from typing import Union, List
 
+import aioircd
 from aioircd.config import TIMEOUT, PING_TIMEOUT
-from aioircd.states import *
 from aioircd.exceptions import IRCException, Disconnect
 
+
 logger = logging.getLogger(__name__)
+_unsafe_nicks = {
+    # RFC
+    'anonymous',
+    # anope services
+    'ChanServ',
+    'NickServ',
+    'OperServ',
+    'MemoServ',
+    'HostServ',
+    'BotServ',
+}
+_safenets = [
+    ipaddress.ip_network('::1/128'),
+    ipaddress.ip_network('127.0.0.1/8'),
+]
+
 
 class User:
-    def __init__(self, stream):
+    def __init__(self, stream, nursery):
         servlocal = aioircd.servlocal.get()
         self.stream = stream
+        self._nursery = nursery
         self._nick = None
         self._addr = stream.socket.getpeername()
         self.uid = uuid.uuid4()
@@ -24,16 +43,6 @@ class User:
     def __hash__(self):
         return self.uid.int
 
-    @property
-    def nick(self):
-        return self._nick
-
-    @nick.setter
-    def nick(self, nick):
-        local = aioircd.local_var.get()
-        local.users[nick] = local.users.pop(self._nick, self)
-        self._nick = nick
-
     def __str__(self):
         if self.nick:
             return self.nick
@@ -42,6 +51,23 @@ class User:
         if ':' in ip:
             return f'[{ip}]:{port}'
         return f'{ip}:{port}'
+
+    @property
+    def nick(self):
+        return self._nick
+
+    @nick.setter
+    def nick(self, nick):
+        servlocal = aioircd.servlocal.get()
+        servlocal.users[nick] = servlocal.users.pop(self._nick, self)
+        self._nick = nick
+
+    def can_use_nick(self, nick):
+        if nick not in _unsafe_nicks:
+            return True
+
+        ip = ipaddress.ip_address(self._addr[0])
+        return any(ip in net for net in _safenets)
 
     async def ping_forever(self):
         while True:
@@ -67,34 +93,33 @@ class User:
             if any(len(line) > 1022 for line in lines + [buffer]):
                 raise Disconnect("Payload too long")
 
-            for line in [l for l in lines if l]:
+            for line in (l for l in lines if l):
                 try:
                     cmd, *args = line.decode().split(' ')
                 except UnicodeDecodeError as exc:
                     raise Disconnect("Gibberish") from exc
 
-                logger.log(aioircd.IO, 'recv from %s: %s', self, line)
+                logger.log(aioircd.IO, "recv from %s: %s", self, line)
                 try:
                     await self.state.dispatch(cmd, args)
-                except IRCException:
+                except IRCException as exc:
                     logger.warning("Command %s sent by %s failed, code: %s", cmd, self, exc.code)
-                    await self.user.send(exc.args[0])
+                    await self.send(exc.args[0])
 
     async def terminate(self, kick_msg="Kicked by host"):
         logger.info("Terminate connection of %s", self)
-        if hasattr(self, '_nursery'):
-            self._nursery.cancel_scope.cancel()
         if type(self.state) != QuitState:
-            await self.state.dispatch("QUIT", f":{kick_msg}")
+            await self.state.dispatch('QUIT', f":{kick_msg}".split(' '))
         with trio.move_on_after(PING_TIMEOUT) as cs:
             await self.stream.send_eof()
         await self.stream.aclose()
+        self._nursery.cancel_scope.cancel()
 
     async def send(self, lines: Union[str, List[str]], log=True):
-        if isinstance(msg, str):
+        if isinstance(lines, str):
             lines = [lines]
 
         if log:
             for line in lines:
-                logger.log(aioircd.IO, 'send to %s: %s', self, line)
-        await self.send_all(b"".join(f"{line}\r\n".encode() for line in lines))
+                logger.log(aioircd.IO, "send to %s: %s", self, line)
+        await self.stream.send_all(b"".join(f"{line}\r\n".encode() for line in lines))

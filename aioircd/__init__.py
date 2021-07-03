@@ -1,6 +1,6 @@
-import pkg_resources
 import contextvars
 import logging
+import pkg_resources
 
 __version__ = pkg_resources.require('aioircd')[0].version
 
