@@ -46,6 +46,11 @@ class ErrNicknameInUse(IRCException):
     msg = "%s :Nickname is already in use"
     code = "433"
 
+
+class ErrNotOnChannel(IRCException):
+    msg = "%s :You're not on that channel"
+    code = "442"
+
 class ErrNoLogin(IRCException):
     msg = ":User not logged in"
     code = "444"

@@ -1,10 +1,13 @@
 import abc
-import aioircd
 import logging
+import re
+
+import aioircd
 from aioircd.exceptions import *
 
 logger = logging.getLogger(__name__)
-
+nick_re = re.compile(r"[a-zA-Z][a-zA-Z0-9\-_]{0,8}")
+chann_re = re.compile(r"#[a-zA-Z0-9\-_]{1,49}")
 
 __all__ = [
     'UserState', 'ConnectedState', 'PasswordState', 'RegisteredState',
@@ -58,17 +61,22 @@ class UserState(metaclass=abc.ABCMeta):
         logger.debug("join called by %s while in wrong state.", self.user)
 
     @command
+    async def PART(self, args):
+        logger.debug("join called by %s while in wrong state.", self.user)
+
+    @command
     async def PRIVMSG(self, args):
         logger.debug("privmsg called by %s while in wrong state.", self.user)
 
     @command
     async def QUIT(self, args):
+        servlocal = aioircd.servlocal.get()
         msg = " ".join(args) if args else ":Disconnected"
         for channel in self.user.channels:
             channel.users.remove(self.user)
             await channel.send(f":{self.user.nick} QUIT {msg}")
             if not channel.users:
-                self.user.local.channels.pop(channel.name)
+                servlocal.channels.pop(channel.name)
         self.user.channels.clear()
         self.user.state = QuitState(self.user)
 
@@ -78,7 +86,8 @@ class PasswordState(UserState):
     async def PASS(self, args):
         if not args:
             raise ErrNeedMoreParams('PASS')
-        if args[0] != self.user.local.pwd:
+        servlocal = aioircd.servlocal.get()
+        if args[0] != servlocal.pwd:
             logger.log(SecurityLevel, "Invalid password for %s", self.user)
             return
 
@@ -112,8 +121,9 @@ class ConnectedState(UserState):
     async def NICK(self, args):
         if not args:
             raise ErrNoNicknameGiven()
+        servlocal = aioircd.servlocal.get()
         nick = args[0]
-        if nick in self.user.local.users:
+        if nick in servlocal.users:
             raise ErrNicknameInUse(nick)
         if not nick_re.match(nick):
             raise ErrErroneusNickname(nick)
@@ -126,13 +136,14 @@ class ConnectedState(UserState):
             await self.register()
 
     async def register(self):
+        host = aioircd.servlocal.get().host
         self.user.state = RegisteredState(self.user)
         nick = self.user.nick
         await self.user.send(textwrap.dedent(f"""\
-            :{HOST} 001 {nick} :Welcome to the Internet Relay Network {nick}@!
-            :{HOST} 002 {nick} :Your host is {HOST}
-            :{HOST} 003 {nick} :The server was created at some point
-            :{HOST} 004 {nick} :aioircd {aioircd.__version__}  """))
+            :{host} 001 {nick} :Welcome to the Internet Relay Network {nick}
+            :{host} 002 {nick} :Your host is {host}
+            :{host} 003 {nick} :The server was created at some point
+            :{host} 004 {nick} :aioircd {aioircd.__version__}  """))
             #                                                 ^ available channel modes
             #                                                ^ available user modes
 
@@ -153,10 +164,11 @@ class RegisteredState(UserState):
 
     @command
     async def NICK(self, args):
+        servlocal = aioircd.servlocal.get()
         if not args:
             raise ErrNoNicknameGiven()
         nick = args[0]
-        if nick in self.user.local.users:
+        if nick in servlocal.users:
             raise ErrNicknameInUse(nick)
         if not nick_re.match(nick):
             raise ErrErroneusNickname(nick)
@@ -164,25 +176,28 @@ class RegisteredState(UserState):
 
     @command
     async def JOIN(self, args):
+        servlocal = aioircd.servlocal.get()
         if not args:
             raise ErrNeedMoreParams("JOIN")
+
         for channel in args:
             if not chann_re.match(channel):
                 await self.user.send(ErrNoSuchChannel.format(channel))
+                continue
 
             # Find or create the channel, add the user in it
-            chann = self.user.local.channels.get(channel)
-            if not chann:
-                chann = Channel(channel, self.user.local)
-                self.user.local.channels[chann.name] = chann
-            chann.users.add(self.user)
-            self.user.channels.add(chann)
+            chan = servlocal.channels.get(channel)
+            if not chan:
+                chan = Channel(channel, servlocal)
+                servlocal.channels[chan.name] = chan
+            chan.users.add(self.user)
+            self.user.channels.add(chan)
 
             # Send JOIN response to all
-            await chann.send(f":{self.user.nick} JOIN {channel}")
+            await chan.send(f":{self.user.nick} JOIN {channel}")
 
             # Send NAMES list to joiner
-            nicks = " ".join(sorted(user.nick for user in chann.users))
+            nicks = " ".join(sorted(user.nick for user in chan.users))
             prefix = f":{HOST} 353 {self.user.nick} = {channel} :"
             maxwidth = 1024 - len(prefix) - 2  # -2 is \r\n
             for line in textwrap.wrap(nicks, width=maxwidth):
@@ -190,10 +205,34 @@ class RegisteredState(UserState):
             await self.user.send(f":{HOST} 366 {self.user.nick} {channel} :End of /NAMES list.")
 
     @command
+    async def PART(self, args):
+        servlocal = aioircd.servlocal.get()
+        if not args:
+            raise ErrNeedMoreParams("PART")
+
+        msg = " ".join(args[1:]) or ":Left"
+
+        for channel in args[0].split(','):
+            chan = servlocal.channels.get(channel)
+            if not chan:
+                await self.user.send(ErrNoSuchChannel.format(channel))
+                continue
+
+            if self.user not in chan:
+                await self.users.send(ErrNotOnChannel.format(channel))
+                continue
+
+            chan.remove(self.user)
+            self.user.channels.remove(chan)
+
+            await chan.send(f":{self.user.nick} PART {channel} {msg}")
+
+    @command
     async def PRIVMSG(self, args):
         if not args or args[0] == "":
             raise ErrNoRecipient("PRIVMSG")
 
+        servlocal = aioircd.servlocal.get()
         dest = args[0]
         msg = " ".join(args[1:])
         if not msg or not msg.startswith(":") or len(msg) < 2:
@@ -201,10 +240,10 @@ class RegisteredState(UserState):
 
         if dest.startswith("#"):
             # Relai channel message to all
-            chann = self.user.local.channels.get(dest)
+            chann = servlocal.channels.get(dest)
             if not chann:
                 raise ErrNoSuchChannel(dest)
-            await chann.send(f":{self.user.nick} PRIVMSG {dest} {msg}", skip={self.user})
+            await chann.send(f":{self.user.nick} PRIVMSG {dest} {msg}", skipusers={self.user})
         else:
             # Relai private message to user
             receiver = self.user.local.users.get(dest)
@@ -212,8 +251,5 @@ class RegisteredState(UserState):
                 raise ErrErroneusNickname(dest)
             await receiver.send(f":{self.user.nick} PRIVMSG {dest} {msg}")
 
-
 class QuitState(UserState):
     """ The user sent the QUIT command, no more message should be processed """
-
-

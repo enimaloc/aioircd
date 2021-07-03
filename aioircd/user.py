@@ -1,8 +1,7 @@
 import aioircd
-import ipaddress
 import uuid
-import trio
 import logging
+from typing import Union
 
 from aioircd.config import TIMEOUT, PING_TIMEOUT
 from aioircd.states import *
@@ -40,7 +39,7 @@ class User:
             return self.nick
 
         ip, port = self._addr
-        if isinstance(ipaddress.ip_address(ip), ipaddress.IPv6Address):
+        if ':' in ip:
             return f'[{ip}]:{port}'
         return f'{ip}:{port}'
 
@@ -53,8 +52,7 @@ class User:
     async def serve(self):
         buffer = b""
         while type(self.state) is not QuitState:
-            self._ping_timer.deadline = \
-                trio.current_time() + (TIMEOUT - PING_TIMEOUT)
+            self._ping_timer.deadline = trio.current_time() + (TIMEOUT - PING_TIMEOUT)
             with trio.move_on_after(TIMEOUT) as cs:
                 try:
                     chunk = await self.stream.receive_some(1024)
@@ -75,6 +73,7 @@ class User:
                 except UnicodeDecodeError as exc:
                     raise Disconnect("Gibberish") from exc
 
+                logger.log(aioircd.IO, 'recv from %s: %s', self, line)
                 try:
                     await self.state.dispatch(cmd, args)
                 except IRCException:
@@ -90,3 +89,12 @@ class User:
         with trio.move_on_after(PING_TIMEOUT) as cs:
             await self.stream.send_eof()
         await self.stream.aclose()
+
+    async def send(self, lines: Union[str, List[str]], log=True):
+        if isinstance(msg, str):
+            lines = [lines]
+
+        if log:
+            for line in lines:
+                logger.log(aioircd.IO, 'send to %s: %s', self, line)
+        await self.send_all(b"".join(f"{line}\r\n".encode() for line in lines))
