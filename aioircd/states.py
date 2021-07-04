@@ -220,7 +220,7 @@ class RegisteredState(UserState):
         if not args:
             raise ErrNeedMoreParams('PART')
 
-        msg = ' '.join(args[1:]) or ":Left"
+        msg = ' '.join(args[1:]) or f":Leaving"
 
         for channel in args[0].split(','):
             chan = servlocal.channels.get(channel)
@@ -232,12 +232,12 @@ class RegisteredState(UserState):
                 await self.users.send(ErrNotOnChannel.format(channel))
                 continue
 
+            await chan.send(f":{self.user.nick} PART {channel} {msg}")
+
             self.user.channels.remove(chan)
             chan.remove(self.user)
             if not chan.users:
                 servlocal.channels.pop(chan.name)
-
-            await chan.send(f":{self.user.nick} PART {channel} {msg}")
 
     @command
     async def PRIVMSG(self, args):
