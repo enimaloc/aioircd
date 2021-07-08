@@ -27,6 +27,10 @@ class IRCException(Exception):
             error=cls.msg % args,
         )
 
+class ErrNoSuchNick(IRCException):
+    msg = "%s :No such nick/channel"
+    code = 401
+
 class ErrNoSuchChannel(IRCException):
     msg = "%s :No such channel"
     code = 403
@@ -70,3 +74,7 @@ class ErrNeedMoreParams(IRCException):
 class ErrAlreadyRegistred(IRCException):
     msg = ":Unauthorized command (already registered)"
     code = 462
+
+class ErrPasswdMismatch(IRCException):
+    msg = ":Password incorrect"
+    code = 464

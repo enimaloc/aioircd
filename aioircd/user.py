@@ -95,27 +95,28 @@ class User:
 
             for line in (l for l in lines if l):
                 try:
-                    cmd, *args = line.decode().split(' ')
+                    cmd, _, params = line.decode().partition(' ')
+                    middle, _, trailing = params.partition(':')
                 except UnicodeDecodeError as exc:
                     raise Disconnect("Gibberish") from exc
 
                 logger.log(aioircd.IO, "recv from %s: %s", self, line)
                 try:
-                    await self.state.dispatch(cmd, args)
+                    await self.state.dispatch(cmd, middle.split(' '), trailing)
                 except IRCException as exc:
                     logger.warning("Command %s sent by %s failed, code: %s", cmd, self, exc.code)
                     await self.send(exc.args[0])
 
-    async def terminate(self, kick_msg="Kicked by host"):
+    async def terminate(self, kick_msg="Connection terminated by host"):
         logger.info("Terminate connection of %s", self)
         if type(self.state) != QuitState:
-            await self.state.dispatch('QUIT', f":{kick_msg}".split(' '))
+            await self.state.QUIT(f":{kick_msg}".split(' '), kick=True)
         with trio.move_on_after(PING_TIMEOUT) as cs:
             await self.stream.send_eof()
         await self.stream.aclose()
         self._nursery.cancel_scope.cancel()
 
-    async def send(self, lines: Union[str, List[str]], log=True):
+    async def send(self, lines: Union[str, List[str]], log=True, skipusers=None):
         if isinstance(lines, str):
             lines = [lines]
 
