@@ -12,6 +12,7 @@ logging.addLevelName(IO, 'IO')
 logging.addLevelName(SECURITY, 'SECURITY')
 logger.setLevel(aioircd.config.loglevel)
 servlocal = contextvars.ContextVar('servlocal')
+MAXLINELEN = 512
 
 import aioircd.channel
 import aioircd.exceptions

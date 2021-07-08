@@ -81,7 +81,7 @@ class User:
             self._ping_timer.deadline = trio.current_time() + (TIMEOUT - PING_TIMEOUT)
             with trio.move_on_after(TIMEOUT) as cs:
                 try:
-                    chunk = await self.stream.receive_some(1024)
+                    chunk = await self.stream.receive_some(aioircd.MAXLINELEN)
                 except Exception as exc:
                     raise Disconnect("Network failure") from exc
             if cs.cancelled_caught:
@@ -90,7 +90,7 @@ class User:
                 raise Disconnect("End of transmission")
 
             *lines, buffer = (buffer + chunk).split(b'\r\n')
-            if any(len(line) > 1022 for line in lines + [buffer]):
+            if any(len(line) > aioircd.MAXLINELEN - 2 for line in lines + [buffer]):
                 raise Disconnect("Payload too long")
 
             for line in (l for l in lines if l):
