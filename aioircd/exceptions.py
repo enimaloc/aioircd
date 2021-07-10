@@ -27,6 +27,11 @@ class IRCException(Exception):
             error=cls.msg.format(args),
         )
 
+class ErrUnknownError(IRCException):
+    # <user> <command> :<info>
+    msg = "{} {} :{}"
+    code = 400
+
 class ErrNoSuchNick(IRCException):
     msg = "{} :No such nick/channel"
     code = 401
