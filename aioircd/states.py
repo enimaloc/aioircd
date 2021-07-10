@@ -73,35 +73,35 @@ class UserState(metaclass=abc.ABCMeta):
 
     @command
     async def USER(self, username, _zero, _star, realname):
-        logger.debug("USER called by %s while in wrong state.", self.user)
+        raise ErrUnknownError(self.user, "USER", "Called while in the wrong state.")
 
     @command
-    async def PASS(self, password, *):
-        logger.debug("PASS called by %s while in wrong state.", self.user)
+    async def PASS(self, password):
+        raise ErrUnknownError(self.user, "PASS", "Called while in the wrong state.")
 
     @command
     async def NICK(self, nickname):
-        logger.debug("NICK called by %s while in wrong state.", self.user)
+        raise ErrUnknownError(self.user, "NICK", "Called while in the wrong state.")
 
     @command
     async def JOIN(self, channels):
-        logger.debug("JOIN called by %s while in wrong state.", self.user)
+        raise ErrUnknownError(self.user, "JOIN", "Called while in the wrong state.")
 
     @command
-    async def PART(self, channels, reason=""):
-        logger.debug("PART called by %s while in wrong state.", self.user)
+    async def PART(self, channels, reason=None):
+        raise ErrUnknownError(self.user, "PART", "Called while in the wrong state.")
 
     @command
     async def NAMES(self, channel):
-        logger.debug("NAMES called by %s while in wrong state.", self.user)
+        raise ErrUnknownError(self.user, "NAMES", "Called while in the wrong state.")
 
     @command
     async def LIST(self):
-        logger.debug("LIST called by %s while in wrong state.", self.user)
+        raise ErrUnknownError(self.user, "LIST", "Called while in the wrong state.")
 
     @command
     async def PRIVMSG(self, args):
-        logger.debug("PRIVMSG called by %s while in wrong state.", self.user)
+        raise ErrUnknownError(self.user, "PRIVMSG", "Called while in the wrong state.")
 
     @command
     async def QUIT(self, reason="", *, kick=False):
@@ -331,5 +331,13 @@ class QuitState(UserState):
     """ The user sent the QUIT command, no more message should be processed """
 
     @command
+    async def PING(self, server1=None, server2=None):
+        raise ErrUnknownError(self.user, "PING", "Called while in the wrong state.")
+
+    @command
+    async def PING(self, server1=None, server2=None):
+        raise ErrUnknownError(self.user, "PONG", "Called while in the wrong state.")
+
+    @command
     def QUIT(self, args):
-        logger.debug("QUIT called by %s while in wrong state.", self.user)
+        raise ErrUnknownError(self.user, "QUIT", "Called while in the wrong state.")
