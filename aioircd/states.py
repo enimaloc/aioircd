@@ -38,10 +38,19 @@ class UserState(metaclass=abc.ABCMeta):
     async def dispatch(self, cmd, *params):
         meth = getattr(self, cmd, None)
         if not meth or not getattr(meth, 'command', False):
-            logger.debug("unknown command %s sent by %s", cmd, self.user)
-            return
+            raise ErrUnknownError(self.user, '-', f"Command {cmd} is unknown.")
 
-        meth_params_cnt = len(inspect.signature(meth).parameters.values())
+        sign = inspect.signature(meth)
+        try:
+            sign.bind(*params)
+        except TypeError:
+            meth_params_cnt = len(inspect.signature(meth).parameters.values())
+            if len(params) < meth_params_cnt:
+                raise ErrNeedMoreParams(cmd)
+            else:
+                raise ErrUnknownError(self.user, cmd, f"Couldn't bind {params} to {sign}.")
+
+
 
         if len(params) < meth_params_cnt:
             raise ErrNeedMoreParams(cmd)
