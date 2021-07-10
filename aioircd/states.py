@@ -64,11 +64,11 @@ class UserState(metaclass=abc.ABCMeta):
         await meth(*params)
 
     @command
-    async def PING(self, args):
-        pass  # ignored
+    async def PING(self, *whatever):
+        await self.user.send(f"PONG {' '.join(whatever)}")
 
     @command
-    async def PONG(self, args):
+    async def PONG(self, *whatever):
         pass  # ignored
 
     @command
