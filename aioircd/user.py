@@ -23,7 +23,7 @@ _unsafe_nicks = {
 }
 _safenets = [
     ipaddress.ip_network('::1/128'),
-    ipaddress.ip_network('127.0.0.1/8'),
+    ipaddress.ip_network('127.0.0.0/8'),
 ]
 
 
@@ -102,7 +102,7 @@ class User:
 
                 logger.log(aioircd.IO, "recv from %s: %s", self, line)
                 try:
-                    await self.state.dispatch(cmd, middle.split(' '), trailing)
+                    await self.state.dispatch(cmd, *middle.split(' '), trailing)
                 except IRCException as exc:
                     logger.warning("Command %s sent by %s failed, code: %s", cmd, self, exc.code)
                     await self.send(exc.args[0])

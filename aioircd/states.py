@@ -160,8 +160,8 @@ class ConnectedState(UserState):
             raise ErrNicknameInUse(nickname)
         if not nick_re.match(nickname):
             raise ErrErroneusNickname(nickname)
-        if not user.can_use_nick(nickname):
-            logger.log(aioircd.SECURITY, '%s tried to use nick %s', user, nickname)
+        if not self.user.can_use_nick(nickname):
+            logger.log(aioircd.SECURITY, '%s tried to use nick %s', self.user, nickname)
             raise ErrErroneusNickname(nickname)
 
         self.user.nick = nickname
