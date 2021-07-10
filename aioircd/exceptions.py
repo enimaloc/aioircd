@@ -24,19 +24,19 @@ class IRCException(Exception):
         return ":{host} {code} {error}".format(
             host=aioircd.servlocal.get().host,
             code=cls.code,
-            error=cls.msg % args,
+            error=cls.msg.format(args),
         )
 
 class ErrNoSuchNick(IRCException):
-    msg = "%s :No such nick/channel"
+    msg = "{} :No such nick/channel"
     code = 401
 
 class ErrNoSuchChannel(IRCException):
-    msg = "%s :No such channel"
+    msg = "{} :No such channel"
     code = 403
 
 class ErrNoRecipient(IRCException):
-    msg = ":No recipient given (%s)"
+    msg = ":No recipient given ({})"
     code = 411
 
 class ErrNoTextToSend(IRCException):
@@ -44,7 +44,7 @@ class ErrNoTextToSend(IRCException):
     code = 412
 
 class ErrUnknownCommand(IRCException):
-    msg = "%s :Unknown command"
+    msg = "{} :Unknown command"
     code = 421
 
 class ErrNoNicknameGiven(IRCException):
@@ -52,15 +52,15 @@ class ErrNoNicknameGiven(IRCException):
     code = 431
 
 class ErrErroneusNickname(IRCException):
-    msg = "%s :Erroneous nickname"
+    msg = "{} :Erroneous nickname"
     code = 432
 
 class ErrNicknameInUse(IRCException):
-    msg = "%s :Nickname is already in use"
+    msg = "{} :Nickname is already in use"
     code = 433
 
 class ErrNotOnChannel(IRCException):
-    msg = "%s :You're not on that channel"
+    msg = "{} :You're not on that channel"
     code = 442
 
 class ErrNoLogin(IRCException):
@@ -68,7 +68,7 @@ class ErrNoLogin(IRCException):
     code = 444
 
 class ErrNeedMoreParams(IRCException):
-    msg = "%s :Not enough parameters"
+    msg = "{} :Not enough parameters"
     code = 461
 
 class ErrAlreadyRegistred(IRCException):
